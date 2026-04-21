@@ -10,26 +10,22 @@ description: >
 allowed-tools: shell
 ---
 
-# Azure FUSE — Filesystem-projected Understanding of Subscription Entities
+# Azure FUSE — SQLite-projected Understanding of Subscription Entities
 
 ## Purpose
 
-This skill snapshots Azure resources so you can answer resource questions
-without making dozens of MCP calls. It pre-computes dependency edges, orphan
-detection, and Mermaid diagrams.
-
-**Two output formats are supported:**
-- **SQLite** (preferred) — single `.db` file, no path length issues, SQL queries
-- **Filesystem** — directory tree with `.ref` files, used when SQLite projector is unavailable
-
-The format is auto-detected: if `sqlite_projector.py` exists in the repo, SQLite is used.
+This skill snapshots Azure resources into a **SQLite database** so you can answer
+resource questions with SQL queries instead of dozens of MCP calls. It pre-computes
+dependency edges, orphan detection, retail pricing, and Mermaid diagrams.
 
 ## When to use
 
 - **ALWAYS** before deleting, moving, scaling, or restarting Azure resources
 - When asked about resource inventory, dependencies, orphans, or impact analysis
+- When asked about SKU/pricing audits or cost optimization
+- When asked about security posture (public access, purge protection, TLS, etc.)
+- When asked about tag compliance
 - When asked for architecture diagrams of Azure resource groups
-- When the user says "what's in this resource group?" or similar
 
 ## How to run
 
@@ -37,24 +33,13 @@ The format is auto-detected: if `sqlite_projector.py` exists in the repo, SQLite
 
 ```powershell
 $fuseRoot = Join-Path $env:TEMP "azure-fuse"
-$subName = "<subscription-name>" -replace '\s+', '-'
-
-# Check SQLite first, then filesystem
+$subName = "<subscription-name>"
 $dbPath = Join-Path $fuseRoot "$subName.db"
-$dirPath = Join-Path $fuseRoot $subName
 
 if ((Test-Path $dbPath) -and ((Get-Item $dbPath).LastWriteTime -gt (Get-Date).AddMinutes(-30))) {
-    $fuseFormat = "sqlite"
-    $fusePath = $dbPath
-    # Snapshot is fresh — skip to Step 3
-} elseif ((Test-Path $dirPath) -and ((Get-Item $dirPath).LastWriteTime -gt (Get-Date).AddMinutes(-30))) {
-    $fuseFormat = "filesystem"
-    $fusePath = $dirPath
     # Snapshot is fresh — skip to Step 3
 }
 ```
-
-If a fresh snapshot exists, skip to Step 3.
 
 ### Step 2: Run the FUSE CLI to create/refresh the snapshot
 
@@ -62,84 +47,61 @@ If a fresh snapshot exists, skip to Step 3.
 & "<skill-directory>/run-fuse.ps1" -Subscription "<subscription>" -ResourceGroups "<rg1>,<rg2>"
 ```
 
-Parameters:
-- `-Subscription` — Azure subscription name or ID (required)
-- `-ResourceGroups` — Comma-separated list of resource group names (required)
-- `-Format` — auto (default), sqlite, or filesystem
+The CLI collects resources via Azure Resource Graph, analyzes dependencies,
+enriches with retail pricing, and projects everything to SQLite (~23 seconds).
 
-The script auto-detects the best format. Parse its output for `FUSE_FORMAT=` and
-`FUSE_SNAPSHOT_PATH=` to know which format was used.
-
-### Step 3: Read the dependency graph
-
-**SQLite mode:**
-```powershell
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); print(db.execute(""SELECT content FROM artifacts WHERE name='dependency_graph_mermaid'"").fetchone()[0]); db.close()"
-```
-
-**Filesystem mode:**
-```powershell
-Get-Content (Join-Path $fusePath "dependency-graph.md")
-```
-
-**Always show the dependency graph to the user** before proceeding with any
-destructive operation.
-
-### Step 4: Answer questions from the snapshot
-
-#### SQLite mode — use these SQL queries:
+### Step 3: Query the database
 
 **Resource inventory:**
-```powershell
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); [print(f'{r[0]} | {r[1]} | {r[2]}') for r in db.execute('SELECT name, type, location FROM resources WHERE resource_group=''<rg>'' ORDER BY type, name')]; db.close()"
+```sql
+SELECT name, type, location FROM resources;
 ```
 
-**Orphaned resources:**
-```powershell
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); [print(f'{r[0]} | {r[1]} | {r[2]} | {r[3]}') for r in db.execute('SELECT r.name, r.type, o.reason, o.confidence FROM orphans o JOIN resources r ON o.resource_id=r.id')]; db.close()"
+**Orphaned resources with cost impact:**
+```sql
+SELECT r.name, r.type, o.reason, p.monthly_estimate
+FROM orphans o JOIN resources r ON o.resource_id = r.id
+LEFT JOIN pricing p ON r.id = p.resource_id
+ORDER BY COALESCE(p.monthly_estimate, 0) DESC;
 ```
 
-**Dependencies for a specific resource:**
-```powershell
-# What does resource X depend on?
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); [print(f'{r[0]} | {r[1]}') for r in db.execute(""SELECT target_key, relationship FROM edges WHERE source_key LIKE '%<resource-name>%'"")]; db.close()"
-
-# What depends on resource X? (impact analysis)
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); [print(f'{r[0]} | {r[1]}') for r in db.execute(""SELECT source_key, relationship FROM edges WHERE target_key LIKE '%<resource-name>%'"")]; db.close()"
+**Impact analysis (what breaks if I delete X?):**
+```sql
+SELECT source_key, relationship FROM edges WHERE target_key LIKE '%my-resource%';
 ```
 
-**All edges in a resource group:**
-```powershell
-python -c "import sqlite3; db=sqlite3.connect('<db-path>'); [print(f'{r[0]} -> {r[1]} [{r[2]}]') for r in db.execute(""SELECT source_key, target_key, relationship FROM edges WHERE source_key LIKE '<rg>/%' OR target_key LIKE '<rg>/%'"")]; db.close()"
+**Most expensive resources:**
+```sql
+SELECT resource_name, sku_name, monthly_estimate
+FROM pricing WHERE monthly_estimate > 0 ORDER BY monthly_estimate DESC;
 ```
 
-#### Filesystem mode — use these patterns:
-
-**Resource inventory:**
-```powershell
-Get-ChildItem (Join-Path $fusePath "<resource-group>") -Directory | ForEach-Object {
-    $type = $_.Name
-    Get-ChildItem $_.FullName -Directory | ForEach-Object {
-        [PSCustomObject]@{ Type = $type; Name = $_.Name }
-    }
-}
+**Security: public network access:**
+```sql
+SELECT name, type, json_extract(properties_json, '$.publicNetworkAccess') as pna
+FROM resources WHERE json_extract(properties_json, '$.publicNetworkAccess') = 'Enabled';
 ```
 
-**Orphaned resources:**
-```powershell
-Get-Content (Join-Path $fusePath "<resource-group>" "orphaned-resources.txt")
+**Key Vault purge protection:**
+```sql
+SELECT name,
+  json_extract(properties_json, '$.enablePurgeProtection') as purge,
+  json_extract(properties_json, '$.enableSoftDelete') as soft_delete
+FROM resources WHERE type LIKE '%keyvault%';
 ```
 
-**Dependencies for a specific resource:**
-```powershell
-# What does resource X depend on?
-Get-ChildItem -Path "<resource-dir>/deps" -Filter "*.ref" | Get-Content
-
-# What depends on resource X?
-Get-ChildItem -Path "<resource-dir>/rdeps" -Filter "*.ref" | Get-Content
+**Tag compliance:**
+```sql
+SELECT name, type, json_extract(raw_json, '$.tags') as tags
+FROM resources WHERE json_extract(raw_json, '$.tags.environment') IS NULL;
 ```
 
-### Step 5: Present findings before action
+**Dependency graph (Mermaid):**
+```sql
+SELECT content FROM artifacts WHERE name = 'dependency_graph_mermaid';
+```
+
+### Step 4: Present findings before action
 
 Before ANY destructive operation, present:
 
@@ -147,19 +109,13 @@ Before ANY destructive operation, present:
 2. **Impact analysis** — which resources depend on the target
 3. **Ask for explicit confirmation** before proceeding
 
-Example output:
-```
-⚠️ Impact Analysis for deleting "my-app-plan":
-  - my-function-app (hosted-on my-app-plan)
-  - my-web-app (hosted-on my-app-plan)
+## Database schema
 
-Deleting this resource will break 2 dependent resources.
-Do you want to proceed?
-```
+5 tables: `resources`, `edges`, `orphans`, `pricing`, `artifacts`.
+See [docs/sqlite-schema.md](../../../docs/sqlite-schema.md) for full reference.
 
 ## Important notes
 
 - Snapshots are cached in `$env:TEMP/azure-fuse` for 30 minutes
-- SQLite format is preferred (no Windows path length issues, faster queries)
-- If the FUSE CLI is not installed, fall back to Azure MCP tools directly
 - The snapshot is READ-ONLY — it never modifies Azure resources
+- If the FUSE CLI is not installed, fall back to Azure MCP tools directly

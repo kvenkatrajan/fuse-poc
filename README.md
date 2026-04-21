@@ -1,222 +1,133 @@
-# Azure FUSE POC — Filesystem Projection of Azure Resources
+# Azure FUSE — SQLite Projection for Azure Resource Analysis
 
-> **What if Azure resources were files and folders?**
+A pre-computation layer that snapshots Azure resources into a **SQLite database** with dependency graphs, orphan detection, and retail pricing — enabling sub-second analysis queries instead of dozens of slow MCP/API calls.
 
-This POC demonstrates how projecting Azure resources onto the local filesystem
-enables powerful analysis with standard tools (`find`, `grep`, `diff`, `Get-ChildItem`)
-instead of service-specific API calls or MCP tool invocations.
+## Why
+
+Answering questions like *"what depends on this Key Vault?"* or *"which resources are expensive?"* currently requires 10–30+ individual MCP tool calls, each taking 3–10 seconds, with heavy LLM reasoning to cross-reference results.
+
+FUSE collects everything once (~23 seconds), projects it into SQLite, and then any question is a SQL query that returns in milliseconds.
+
+| Approach | Time | Tool calls | Pricing accuracy |
+|----------|------|------------|-----------------|
+| MCP tools (Session A) | 60–293s | 14–30+ | ✅ Exact |
+| **FUSE + SQLite (Session B)** | **0.01s query** (23s collect) | **1 SQL** | **✅ Exact** |
 
 ## Quick Start
 
-```powershell
-# No Azure connection needed — uses realistic mock data
-cd fuse-poc
-python -m azure_fuse.cli --demo --output ./azure-snapshot
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-# MCP mode — queries real Azure (same APIs as Azure MCP tools)
-python -m azure_fuse.cli --mcp --subscription "your-sub-id" --output ./azure-snapshot
+# Collect resources (requires az CLI login)
+az login
+python -m azure_fuse.cli --mcp \
+  --subscription "My-Subscription" \
+  --resource-groups rg-dev-eastus \
+  --format sqlite \
+  --output ./azure-fuse
 
-# Save a snapshot for offline reuse / sharing
-python -m azure_fuse.cli --mcp --subscription "your-sub-id" --save-snapshot snapshot.json
-
-# Re-analyze from a saved snapshot
-python -m azure_fuse.cli --from-snapshot snapshot.json --output ./azure-snapshot
-
-# Find orphaned resources (one command!)
-Get-ChildItem -Path ./azure-snapshot -Recurse -Filter "_CANDIDATE_ORPHAN" |
-    ForEach-Object { $_.Directory.FullName }
-
-# What depends on the Key Vault? (impact analysis before deleting)
-Get-ChildItem "./azure-snapshot/contoso-production-001/resource-groups/platform-rg/key-vaults/app-keyvault/depended-by/"
-
-# View dependency graph (paste into https://mermaid.live)
-Get-Content "./azure-snapshot/contoso-production-001/dependency-graph.md"
+# Query the database
+sqlite3 ./azure-fuse/My-Subscription.db "SELECT name, type FROM resources"
 ```
 
-## Why This Matters for LLMs / MCP Tools
+## What Gets Collected
 
-| Scenario | MCP Tools (today) | Filesystem (this POC) | Token Savings |
-|----------|-------------------|-----------------------|---------------|
-| Find orphaned resources | 5-8 tool calls, ~20K tokens | `find -name _CANDIDATE_ORPHAN` → ~100 tokens | **99.5%** |
-| Dependency/impact analysis | 5-6 tool calls, ~20K tokens | `ls depended-by/` → ~80 tokens | **99.6%** |
-| Config comparison | 4+ tool calls, ~12K tokens | `diff prod/ staging/` → ~300 tokens | **97.5%** |
+In a single ~23s collection run:
 
-The filesystem acts as a **compression layer** — it transforms verbose JSON API responses
-into concise filesystem primitives (paths, marker files, .ref files) that convey the same
-information in 90-98% fewer tokens.
+- **35 resources** with full ARM properties (JSON)
+- **12 dependency edges** (Key Vault refs, subnet associations, etc.)
+- **18 orphan candidates** with reasons and confidence scores
+- **Mermaid dependency graph** (ready to render)
+- **Retail pricing** for all SKU-bearing resources via `azmcp` CLI
+- **Tags** for compliance auditing
 
 ## Architecture
 
 ```
-                  ┌──────────────────────────────┐
-                  │      Collector Layer          │
-                  │                               │
-                  │  --demo     (mock data)       │
-                  │  --mcp      (az CLI / MCP)    │
-                  │  --sdk      (Python SDK)      │
-                  │  --from-snapshot (JSON file)   │
-                  └──────────────┬────────────────┘
-                                 │ resources[]
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │      Analyzer Layer           │
-                  │                               │
-                  │  • Extract dependency edges   │
-                  │  • Detect candidate orphans   │
-                  │  • Build Mermaid graph        │
-                  └──────────────┬────────────────┘
-                                 │ edges[], orphans[]
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │      Projector Layer          │
-                  │                               │
-                  │  • Write dirs/files           │
-                  │  • .ref dependency links      │
-                  │  • Mermaid dependency graph   │
-                  └──────────────────────────────┘
-                                 │
-                                 ▼
-                       Local Filesystem
-                  (analyzed with find/grep/diff)
+az graph query ──→ Resources (JSON)
+                      │
+                      ├── relationships.py ──→ Edges + Orphans
+                      │
+                      ├── pricing.py ──→ azmcp pricing get ──→ Pricing table
+                      │
+                      └── sqlite_projector.py ──→ SQLite DB
+                              │
+                              ├── resources (35 rows, full JSON)
+                              ├── edges (12 dependency relationships)
+                              ├── orphans (18 candidates)
+                              ├── pricing (20 retail price entries)
+                              └── artifacts (Mermaid graph)
 ```
 
-### MCP Collection Flow
+## Key SQL Queries
 
-When using `--mcp`, the collector follows the same path as Azure MCP tools:
+```sql
+-- Resource inventory
+SELECT name, type, location FROM resources;
 
-```
-  --mcp --subscription <id>
-           │
-           ├─ Try: az graph query  (= MCP Resource Graph tool)
-           │       → Single query, all resources + properties
-           │       → Preferred: 1 API call for entire subscription
-           │
-           └─ Fallback: az resource list  (= MCP group_resource_list)
-                    + az resource show    (= MCP compute/storage/etc tools)
-                    → N+1 API calls
-                    → Used if Resource Graph extension not installed
-```
+-- Orphaned resources with cost impact
+SELECT r.name, r.type, o.reason, p.monthly_estimate
+FROM orphans o
+JOIN resources r ON o.resource_id = r.id
+LEFT JOIN pricing p ON r.id = p.resource_id
+ORDER BY COALESCE(p.monthly_estimate, 0) DESC;
 
-## Filesystem Structure
+-- Dependency graph (what depends on what?)
+SELECT source_key, relationship, target_key FROM edges;
 
-```
-azure-snapshot/
-  contoso-production-001/
-    resource-groups/
-      app-prod-rg/
-        virtual-machines/
-          web-server-01/
-            properties.json
-            depends-on/
-              web-server-01-osdisk.ref
-              web-server-01-nic.ref
-        disks/
-          old-staging-osdisk/           ← ORPHANED
-            properties.json
-            attached-to.txt             → "CANDIDATE_ORPHAN"
-            _CANDIDATE_ORPHAN           ← marker file
-            orphan-reason.txt           ← why it's flagged
-      platform-rg/
-        container-apps/
-          orders-api/
-            depends-on/
-              prod-env.ref              → container-app-environment
-              app-keyvault.ref          → key-vault (reads secrets)
-        key-vaults/
-          app-keyvault/
-            depended-by/
-              orders-api.ref            ← would break if deleted!
-              admin-portal.ref          ← would break if deleted!
-    orphaned-resources.txt              ← summary report
-    dependency-graph.md                 ← Mermaid diagram
+-- Impact analysis (what breaks if I delete X?)
+SELECT e.source_key, e.relationship
+FROM edges e WHERE e.target_key LIKE '%my-keyvault%';
+
+-- Most expensive resources
+SELECT resource_name, sku_name, retail_price, unit, monthly_estimate
+FROM pricing WHERE monthly_estimate > 0
+ORDER BY monthly_estimate DESC;
+
+-- Tag compliance
+SELECT r.name, json_extract(r.raw_json, '$.tags') as tags
+FROM resources r
+WHERE json_extract(r.raw_json, '$.tags.environment') IS NULL;
+
+-- Security: public network access
+SELECT r.name, r.type,
+  json_extract(r.properties_json, '$.publicNetworkAccess') as public_access
+FROM resources r
+WHERE json_extract(r.properties_json, '$.publicNetworkAccess') = 'Enabled';
+
+-- Mermaid dependency diagram
+SELECT content FROM artifacts WHERE name = 'dependency_graph_mermaid';
 ```
 
-## Tracked Relationships (v1)
+## Documentation
 
-| Source | Target | Detection Method |
-|--------|--------|-----------------|
-| Disk → VM | `properties.managedBy` |
-| NIC → VM | `properties.virtualMachine.id` |
-| NIC → Private Endpoint | `properties.privateEndpoint` |
-| Public IP → NIC/LB | `properties.ipConfiguration.id` |
-| NSG → NICs/Subnets | `properties.networkInterfaces`, `.subnets` |
-| Container App → Environment | `properties.managedEnvironmentId` |
-| Container App → Key Vault | `properties.configuration.secrets[].keyVaultUrl` |
-| App Service → Plan | `properties.serverFarmId` |
-| App Service → Key Vault | `siteConfig.appSettings` containing vault URI |
-| Container Env → Log Analytics | `appLogsConfiguration.logAnalyticsConfiguration` |
-
-> **NOTE:** This is intentionally incomplete. Many relationships (managed identity
-> runtime lookups, diagnostic settings, Private Link) are not captured by Resource
-> Graph properties alone.
-
-## PowerShell Analysis Helpers
-
-```powershell
-. .\analyze.ps1
-
-# Find all candidate orphans with reasons
-Find-OrphanedResources .\azure-snapshot
-
-# Impact analysis: what breaks if I delete the Key Vault?
-Get-ImpactAnalysis .\azure-snapshot "app-keyvault"
-
-# What does orders-api depend on?
-Show-DependencyChain .\azure-snapshot "orders-api"
-
-# Tree view of all resources
-Show-ResourceTree .\azure-snapshot
-```
+- [SQLite Schema Reference](docs/sqlite-schema.md) — All tables, columns, and relationships
+- [Benchmark Results](docs/benchmark-results.md) — A/B comparison across 4 audit scenarios
+- [Pricing Enrichment](docs/pricing.md) — How retail pricing is collected and matched
 
 ## Collection Modes
 
-| Mode | Command | Requires | Best For |
-|------|---------|----------|----------|
-| **Demo** | `--demo` | Nothing | Quick demo, no Azure needed |
-| **MCP** | `--mcp --subscription <id>` | `az login` | Live Azure data (recommended) |
-| **SDK** | `--sdk --subscription <id>` | `pip install -r requirements.txt` + `az login` | Python SDK users |
-| **Snapshot** | `--from-snapshot file.json` | Nothing | Offline reanalysis, sharing, diffing over time |
+| Flag | Source | Azure Connection |
+|------|--------|-----------------|
+| `--mcp` | `az graph query` + `az resource` | Required |
+| `--demo` | Built-in mock data (35 resources) | None |
+| `--from-snapshot` | Previously saved JSON | None |
 
-### MCP Mode (Recommended for Live Data)
+## Project Structure
 
-```powershell
-az login
-python -m azure_fuse.cli --mcp --subscription "your-subscription-id" --output ./azure-snapshot
 ```
+azure_fuse/
+  cli.py                 # Entry point — orchestrates collection + projection
+  mcp_collector.py       # Collects resources via az CLI / Resource Graph
+  relationships.py       # Analyzes dependencies + detects orphans
+  sqlite_projector.py    # Projects to SQLite database
+  pricing.py             # Enriches with retail pricing via azmcp CLI
+  demo_data.py           # Mock data for demo mode
+  projector.py           # (Legacy) Filesystem projector
 
-Uses the same Azure Resource Graph API that MCP tools call internally.
-No Python Azure SDK packages needed — just `az` CLI.
-
-### Snapshot Workflow (Diff Over Time)
-
-```powershell
-# Capture today's state
-python -m azure_fuse.cli --mcp --subscription my-sub --save-snapshot snapshots/2026-04-17.json
-
-# Next week, capture again
-python -m azure_fuse.cli --mcp --subscription my-sub --save-snapshot snapshots/2026-04-24.json
-
-# Project both and diff
-python -m azure_fuse.cli --from-snapshot snapshots/2026-04-17.json --output ./snapshot-week1
-python -m azure_fuse.cli --from-snapshot snapshots/2026-04-24.json --output ./snapshot-week2
-
-# What changed?
-diff -r ./snapshot-week1 ./snapshot-week2
+docs/
+  sqlite-schema.md       # SQLite schema reference
+  benchmark-results.md   # A/B test results across 4 scenarios
+  pricing.md             # Pricing enrichment details
 ```
-
-## Do I Need Real FUSE?
-
-**No — not for a POC.** This projection approach (snapshot → filesystem) proves the
-same concept. Real FUSE would add:
-
-| Feature | Snapshot (this POC) | Real FUSE |
-|---------|-------------------|-----------|
-| Data freshness | Point-in-time | Live (on-demand API calls) |
-| Setup complexity | `python` + `pip` | FUSE driver + WinFsp/libfuse |
-| Analysis capability | Same | Same |
-| Write support | No | Possible but risky |
-| Performance | Instant (local files) | Network latency per operation |
-
-For orphan detection, dependency analysis, and config auditing, the snapshot
-approach is actually **better** — it's faster, offline-capable, and diffable
-across time (save snapshots from different dates and `diff` them).
