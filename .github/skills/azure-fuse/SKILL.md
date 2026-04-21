@@ -33,8 +33,9 @@ dependency edges, orphan detection, retail pricing, and Mermaid diagrams.
 
 ```powershell
 $fuseRoot = Join-Path $env:TEMP "azure-fuse"
+$sessionId = "<copilot-session-id>"  # use the same ID for all sub-agents
 $subName = "<subscription-name>"
-$dbPath = Join-Path $fuseRoot "$subName.db"
+$dbPath = Join-Path $fuseRoot $sessionId "$subName.db"
 
 if ((Test-Path $dbPath) -and ((Get-Item $dbPath).LastWriteTime -gt (Get-Date).AddMinutes(-30))) {
     # Snapshot is fresh — skip to Step 3
@@ -44,8 +45,12 @@ if ((Test-Path $dbPath) -and ((Get-Item $dbPath).LastWriteTime -gt (Get-Date).Ad
 ### Step 2: Run the FUSE CLI to create/refresh the snapshot
 
 ```powershell
-& "<skill-directory>/run-fuse.ps1" -Subscription "<subscription>" -ResourceGroups "<rg1>,<rg2>"
+& "<skill-directory>/run-fuse.ps1" -Subscription "<subscription>" -ResourceGroups "<rg1>,<rg2>" -SessionId "<session-id>"
 ```
+
+The `-SessionId` parameter isolates the DB per session. Sub-agents in the same
+session share the same ID so they read from the same cached DB. Different
+sessions get their own copy, preventing write collisions.
 
 The CLI collects resources via Azure Resource Graph, analyzes dependencies,
 enriches with retail pricing, and projects everything to SQLite (~23 seconds).
@@ -119,3 +124,13 @@ See [docs/sqlite-schema.md](../../../docs/sqlite-schema.md) for full reference.
 - Snapshots are cached in `$env:TEMP/azure-fuse` for 30 minutes
 - The snapshot is READ-ONLY — it never modifies Azure resources
 - If the FUSE CLI is not installed, fall back to Azure MCP tools directly
+
+## Concurrency / session isolation
+
+The DB path includes a **session ID** directory:
+`$TEMP/azure-fuse/<session-id>/<subscription>.db`
+
+- **Sub-agents in the same session** share the same session ID → same DB → safe concurrent reads
+- **Different sessions** get isolated DBs → no write collisions
+- The projector uses **atomic write** (write to `.tmp`, then `os.replace()`) so a reader never sees a partial DB
+- Default session ID is the process PID if not explicitly provided

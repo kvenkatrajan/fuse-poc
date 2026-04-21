@@ -98,11 +98,13 @@ def project_to_sqlite(
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Remove existing DB for a clean projection
-    if db_path.exists():
-        db_path.unlink()
+    # Write to a temp file, then atomically replace — so concurrent readers
+    # never see a partial/empty database.
+    tmp_path = db_path.with_suffix(".db.tmp")
+    if tmp_path.exists():
+        tmp_path.unlink()
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(tmp_path))
     try:
         conn.executescript(SCHEMA)
 
@@ -206,5 +208,9 @@ def project_to_sqlite(
         conn.commit()
     finally:
         conn.close()
+
+    # Atomic replace: readers never see a half-written DB
+    import os
+    os.replace(str(tmp_path), str(db_path))
 
     return db_path

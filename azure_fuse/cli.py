@@ -31,6 +31,7 @@ After projection, analyze with:
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -118,6 +119,10 @@ Examples:
                         help="Output format: 'filesystem' (directory tree) or 'sqlite' (single .db file)")
     parser.add_argument("--clean", action="store_true",
                         help="Remove output directory before projecting")
+    parser.add_argument("--session-id", type=str, default=None,
+                        help="Session ID for DB isolation (default: PID). "
+                             "All sub-agents sharing a session use the same ID "
+                             "so they read from the same DB.")
     parser.add_argument("--save-snapshot", type=str, metavar="FILE",
                         help="Save collected resource data as JSON snapshot for reuse")
 
@@ -208,7 +213,9 @@ Examples:
 
         db_path = Path(args.output)
         if not db_path.suffix:
-            db_path = db_path / f"{subscription}.db"
+            # Inject session-id directory for isolation between concurrent sessions
+            session_id = args.session_id or str(os.getpid())
+            db_path = db_path / session_id / f"{subscription}.db"
         if args.clean and db_path.exists():
             db_path.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)

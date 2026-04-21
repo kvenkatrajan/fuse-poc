@@ -28,6 +28,8 @@ param(
     [ValidateSet("auto", "sqlite", "filesystem")]
     [string]$Format = "auto",
 
+    [string]$SessionId = $PID,
+
     [int]$MaxAgeMinutes = 30
 )
 
@@ -52,8 +54,9 @@ if ($Format -eq "auto") {
 $subDirName = $Subscription -replace '\s+', '-'
 
 # Determine snapshot path based on format
+# SQLite uses session-scoped subdirectory to isolate concurrent sessions
 if ($Format -eq "sqlite") {
-    $snapshotPath = Join-Path $fuseRoot "$subDirName.db"
+    $snapshotPath = Join-Path $fuseRoot $SessionId "$subDirName.db"
 } else {
     $snapshotPath = Join-Path $fuseRoot $subDirName
 }
@@ -90,7 +93,8 @@ try {
             --subscription $Subscription `
             --resource-groups $rgString `
             --format sqlite `
-            --output $snapshotPath `
+            --output $fuseRoot `
+            --session-id $SessionId `
             --clean
     } else {
         python -m azure_fuse.cli `
