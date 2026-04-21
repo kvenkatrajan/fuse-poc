@@ -9,6 +9,7 @@ to be stored in the SQLite pricing table.
 import json
 import subprocess
 import sys
+import time
 from typing import List, Optional
 
 
@@ -81,6 +82,7 @@ def _run_azmcp_pricing(service_name: str, region: str) -> Optional[list]:
         f'azmcp pricing get '
         f'--filter "serviceName eq \'{service_name}\' and armRegionName eq \'{region}\'"'
     )
+    start = time.perf_counter()
     try:
         result = subprocess.run(
             cmd,
@@ -89,6 +91,8 @@ def _run_azmcp_pricing(service_name: str, region: str) -> Optional[list]:
             shell=True,
             timeout=30,
         )
+        elapsed = time.perf_counter() - start
+        print(f"  [AZ_CALL] azmcp pricing get {service_name} ({region}) | {elapsed:.1f}s")
         if result.returncode != 0:
             return None
 

@@ -1,6 +1,6 @@
 ## Benchmark Results 2 (v2): Orphaned Resource Detection
 
-**Run date:** 2026-04-21 15:00  
+**Run date:** 2026-04-21 15:29  
 **Target:** `rg-dev-eastus` in subscription `githubcopilotforazure-testing`
 
 **Prompt:**
@@ -12,15 +12,15 @@
 
 | Metric | Session A (MCP) | Session B (Filesystem) | Session C (SQLite) |
 |--------|----------------|----------------------|-------------------|
-| **Total time** | 106.1s | 9.1s | 21.8s |
-| **Query-only time** | 106.1s (no pre-compute) | 0.54s | 0.007s |
-| **Collection time** | N/A (live) | 8.6s | 21.8s |
-| **az CLI calls** | 36 | 4 | 11 |
-| **Tool calls (total)** | 36 | 26 | 16 |
-| **Tokens ingested** | ~64,397 | ~3,474 | ~2,689 |
+| **Total time** | 120.7s | 9.4s | 21.8s |
+| **Query-only time** | 120.7s (no pre-compute) | 0.13s | 0.008s |
+| **Collection time** | N/A (live) | 9.3s | 21.8s |
+| **az CLI calls** | 45 | 4 | 11 |
+| **Tool calls (total)** | 45 | 26 | 16 |
+| **Tokens ingested** | ~286,898 | ~3,474 | ~2,689 |
 | **Orphans found** | 18 | 18 | 18 |
-| **Token reduction vs MCP** | baseline | ~95% less | ~96% less |
-| **Time reduction vs MCP** | baseline | ~91% less | ~79% less |
+| **Token reduction vs MCP** | baseline | ~99% less | ~99% less |
+| **Time reduction vs MCP** | baseline | ~92% less | ~82% less |
 | **Monthly waste estimate** | N/A | N/A | $1841.19 |
 
 ---
@@ -32,52 +32,61 @@ resource to get full properties, then manually cross-reference to find orphans.
 
 | Metric | Value |
 |--------|-------|
-| Total time | 106.1s |
-| az CLI calls | 36 |
-| Tool calls (total) | 36 |
-| Tokens ingested | ~64,397 |
+| Total time | 120.7s |
+| az CLI calls | 45 |
+| Tool calls (total) | 45 |
+| Tokens ingested | ~286,898 |
 | Orphans found | 18 |
 
 ### az CLI Call Log
 
 | # | Call | Time |
 |---|------|------|
-| 1 | `az resource list -g rg-dev-eastus` | 3.8s |
-| 2 | `az resource show: kv-dev-skfkws` | 4.2s |
-| 3 | `az resource show: log-dev-skfkws` | 3.3s |
-| 4 | `az resource show: appi-dev-skfkws` | 3.1s |
-| 5 | `az resource show: Failure Anomalies - appi-dev-skfkws` | 3.1s |
-| 6 | `az resource show: apim-dev-eastus-dhi6n6` | 3.7s |
-| 7 | `az resource show: log-dev-eastus-dhi6n6` | 2.9s |
+| 1 | `az resource list -g rg-dev-eastus` | 3.0s |
+| 2 | `az resource show: kv-dev-skfkws` | 2.9s |
+| 3 | `az resource show: log-dev-skfkws` | 3.1s |
+| 4 | `az resource show: appi-dev-skfkws` | 2.8s |
+| 5 | `az resource show: Failure Anomalies - appi-dev-skfkws` | 2.7s |
+| 6 | `az resource show: apim-dev-eastus-dhi6n6` | 2.6s |
+| 7 | `az resource show: log-dev-eastus-dhi6n6` | 2.7s |
 | 8 | `az resource show: srch-dev-eastus-dhi6n6` | 2.8s |
-| 9 | `az resource show: acrdeveastusdhi6n6` | 2.9s |
-| 10 | `az resource show: aifoundrydeveastusdhi6n6` | 2.7s |
-| 11 | `az resource show: stdeveastusdhi6n6` | 2.8s |
-| 12 | `az resource show: kv-dev-eastus-dhi6n6` | 3.0s |
+| 9 | `az resource show: acrdeveastusdhi6n6` | 2.7s |
+| 10 | `az resource show: aifoundrydeveastusdhi6n6` | 2.8s |
+| 11 | `az resource show: stdeveastusdhi6n6` | 2.9s |
+| 12 | `az resource show: kv-dev-eastus-dhi6n6` | 3.4s |
 | 13 | `az resource show: appi-dev-eastus-dhi6n6` | 2.8s |
-| 14 | `az resource show: aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6` | 2.9s |
-| 15 | `az resource show: cae-dev-eastus-dhi6n6` | 2.8s |
-| 16 | `az resource show: Failure Anomalies - appi-dev-eastus-dhi6n6` | 2.7s |
+| 14 | `az resource show: aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6` | 2.7s |
+| 15 | `az resource show: cae-dev-eastus-dhi6n6` | 2.9s |
+| 16 | `az resource show: Failure Anomalies - appi-dev-eastus-dhi6n6` | 2.8s |
 | 17 | `az resource show: srchdeveastusgoln5p` | 2.7s |
-| 18 | `az resource show: apim-dev-eastus-goln5p` | 2.7s |
-| 19 | `az resource show: logdeveastusgoln5p` | 2.6s |
-| 20 | `az resource show: aideveastusgoln5p` | 2.6s |
+| 18 | `az resource show: apim-dev-eastus-goln5p` | 2.9s |
+| 19 | `az resource show: logdeveastusgoln5p` | 2.7s |
+| 20 | `az resource show: aideveastusgoln5p` | 2.7s |
 | 21 | `az resource show: acrdeveastusgoln5p` | 2.8s |
-| 22 | `az resource show: appideveastusgoln5p` | 2.6s |
-| 23 | `az resource show: cae-dev-eastus-goln5p` | 3.3s |
-| 24 | `az resource show: aideveastusgoln5pjtx3` | 2.8s |
-| 25 | `az resource show: ca-dev-eastus-goln5p` | 3.1s |
-| 26 | `az resource show: Failure Anomalies - appideveastusgoln5p` | 2.8s |
-| 27 | `az resource show: apim-dev-eastus-q3grjnqowando` | 2.7s |
+| 22 | `az resource show: appideveastusgoln5p` | 2.8s |
+| 23 | `az resource show: cae-dev-eastus-goln5p` | 2.9s |
+| 24 | `az resource show: aideveastusgoln5pjtx3` | 2.6s |
+| 25 | `az resource show: ca-dev-eastus-goln5p` | 3.4s |
+| 26 | `az resource show: Failure Anomalies - appideveastusgoln5p` | 3.3s |
+| 27 | `az resource show: apim-dev-eastus-q3grjnqowando` | 3.3s |
 | 28 | `az resource show: ai-account-fhtxfm34vs6s4` | 2.8s |
-| 29 | `az resource show: logs-fhtxfm34vs6s4` | 2.8s |
-| 30 | `az resource show: ai-account-fhtxfm34vs6s4/ai-project-dev-eastus` | 2.9s |
-| 31 | `az resource show: appi-fhtxfm34vs6s4` | 2.8s |
-| 32 | `az resource show: search-fhtxfm34vs6s4` | 2.7s |
-| 33 | `az resource show: Failure Anomalies - appi-fhtxfm34vs6s4` | 3.0s |
+| 29 | `az resource show: logs-fhtxfm34vs6s4` | 2.7s |
+| 30 | `az resource show: ai-account-fhtxfm34vs6s4/ai-project-dev-eastus` | 3.1s |
+| 31 | `az resource show: appi-fhtxfm34vs6s4` | 2.7s |
+| 32 | `az resource show: search-fhtxfm34vs6s4` | 2.8s |
+| 33 | `az resource show: Failure Anomalies - appi-fhtxfm34vs6s4` | 2.6s |
 | 34 | `az resource show: cae-dev-eastus-q3grjnqowando` | 2.7s |
-| 35 | `az resource show: acrdeveastusq3grjnqowando` | 3.2s |
-| 36 | `az resource show: ragapi-dev-eastus-q3grjnqowando` | 2.9s |
+| 35 | `az resource show: acrdeveastusq3grjnqowando` | 2.8s |
+| 36 | `az resource show: ragapi-dev-eastus-q3grjnqowando` | 3.3s |
+| 37 | `azmcp pricing get Key Vault (eastus)` | 1.8s |
+| 38 | `azmcp pricing get Log Analytics (eastus)` | 1.8s |
+| 39 | `azmcp pricing get Application Insights (eastus)` | 1.8s |
+| 40 | `azmcp pricing get API Management (eastus)` | 1.8s |
+| 41 | `azmcp pricing get Azure Cognitive Search (eastus)` | 1.9s |
+| 42 | `azmcp pricing get Container Registry (eastus)` | 1.8s |
+| 43 | `azmcp pricing get Cognitive Services (eastus)` | 1.8s |
+| 44 | `azmcp pricing get Storage (eastus)` | 3.1s |
+| 45 | `azmcp pricing get Azure Container Apps (eastus)` | 1.7s |
 
 ---
 
@@ -88,14 +97,23 @@ local filesystem. Then query with standard file reads.
 
 | Metric | Value |
 |--------|-------|
-| Collection time | 8.6s |
-| Query time | 0.54s |
-| Total time | 9.1s |
+| Collection time | 9.3s |
+| Query time | 0.13s |
+| Total time | 9.4s |
 | az CLI calls (collection) | 4 |
 | Filesystem commands (query) | 22 |
 | Tool calls (total) | 26 |
 | Tokens ingested | ~3,474 |
 | Orphans found | 18 |
+
+### az/azmcp Call Log (Collection Phase)
+
+| # | Call | Time |
+|---|------|------|
+| 1 | `az account show` | 2.0s |
+| 2 | `az account show --subscription "githubcopilotforazure-testing"` | 2.0s |
+| 3 | `az account show --subscription cda6aeab-6dec-4567-a4d8-3770583a13f0` | 2.0s |
+| 4 | `az graph query -q "resources | project id, name, type, resourceGroup, location, tags, properties, identity, sku, kind | where resourceGroup in~ ('rg-dev-eastus')" --subscriptions cda6aeab-6dec-4567-a4d8-3770583a13f0 --first 1000` | 2.8s |
 
 ---
 
@@ -107,7 +125,7 @@ and pricing tables. Then query with SQL JOINs.
 | Metric | Value |
 |--------|-------|
 | Collection time | 21.8s |
-| Query time | 0.007s |
+| Query time | 0.008s |
 | Total time | 21.8s |
 | az CLI calls (collection) | 11 |
 | SQL queries (query) | 5 |
@@ -116,6 +134,22 @@ and pricing tables. Then query with SQL JOINs.
 | DB size | 548.0 KB |
 | Orphans found | 18 |
 | Monthly waste estimate | $1841.19 |
+
+### az/azmcp Call Log (Collection Phase)
+
+| # | Call | Time |
+|---|------|------|
+| 1 | `az account show` | 1.9s |
+| 2 | `az account show --subscription "githubcopilotforazure-testing"` | 2.0s |
+| 3 | `az account show --subscription cda6aeab-6dec-4567-a4d8-3770583a13f0` | 1.9s |
+| 4 | `az graph query -q "resources | project id, name, type, resourceGroup, location, tags, properties, identity, sku, kind | where resourceGroup in~ ('rg-dev-eastus')" --subscriptions cda6aeab-6dec-4567-a4d8-3770583a13f0 --first 1000` | 2.6s |
+| 5 | `azmcp pricing get API Management (eastus)` | 1.8s |
+| 6 | `azmcp pricing get Cognitive Services (eastus)` | 1.8s |
+| 7 | `azmcp pricing get Container Registry (eastus)` | 1.8s |
+| 8 | `azmcp pricing get Key Vault (eastus)` | 1.8s |
+| 9 | `azmcp pricing get Log Analytics (eastus)` | 1.7s |
+| 10 | `azmcp pricing get Azure Cognitive Search (eastus)` | 2.0s |
+| 11 | `azmcp pricing get Storage (eastus)` | 2.3s |
 
 ---
 
@@ -187,8 +221,8 @@ and pricing tables. Then query with SQL JOINs.
 
 ## Key Takeaways
 
-1. **Token reduction:** FUSE approaches ingest ~3,474–2,689 tokens vs ~64,397 for MCP
-2. **az CLI call reduction:** Session A makes 36 az calls vs 4 for FUSE (one-time collection)
+1. **Token reduction:** FUSE approaches ingest ~3,474–2,689 tokens vs ~286,898 for MCP
+2. **az CLI call reduction:** Session A makes 45 az calls vs 4 for FUSE (one-time collection)
 3. **Query-phase az calls:** Sessions B and C make **0** az calls during the query phase (all pre-computed)
-4. **Time:** Session A takes 106.1s vs 9.1s/21.8s for FUSE (including collection)
+4. **Time:** Session A takes 120.7s vs 9.4s/21.8s for FUSE (including collection)
 5. **Cost visibility:** Only Session C surfaces the estimated **$1841.19/month** waste from orphaned resources

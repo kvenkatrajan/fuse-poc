@@ -19,6 +19,7 @@ This is equivalent to calling these MCP tools:
 import json
 import subprocess
 import sys
+import time
 from typing import List, Tuple, Optional
 
 # Resource types that need full properties for relationship analysis
@@ -40,6 +41,7 @@ DETAIL_TYPES = {
 
 def _run_az(cmd: str) -> Optional[dict]:
     """Run an az CLI command and return parsed JSON, or None on failure."""
+    start = time.perf_counter()
     try:
         result = subprocess.run(
             cmd,
@@ -48,6 +50,10 @@ def _run_az(cmd: str) -> Optional[dict]:
             shell=True,
             timeout=120,
         )
+        elapsed = time.perf_counter() - start
+        # Emit structured log line for benchmark instrumentation
+        short_cmd = cmd.split(" -o ")[0] if " -o " in cmd else cmd[:100]
+        print(f"  [AZ_CALL] {short_cmd} | {elapsed:.1f}s")
         if result.returncode != 0:
             stderr = result.stderr.strip()
             if stderr:
@@ -55,6 +61,8 @@ def _run_az(cmd: str) -> Optional[dict]:
             return None
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
+        elapsed = time.perf_counter() - start
+        print(f"  [AZ_CALL] {cmd[:100]} | {elapsed:.1f}s | TIMEOUT")
         print("  az CLI command timed out", file=sys.stderr)
         return None
     except json.JSONDecodeError:
