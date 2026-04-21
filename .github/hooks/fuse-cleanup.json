@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "powershell": "$root = Join-Path $env:TEMP 'azure-fuse'; if (Test-Path $root) { Get-ChildItem $root -Directory | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMinutes(-30) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; $removed = (Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Measure-Object).Count; Write-Host \"FUSE cleanup: evicted stale snapshots\" }",
+        "bash": "find \"${TMPDIR:-/tmp}/azure-fuse\" -mindepth 1 -maxdepth 1 -type d -mmin +30 -exec rm -rf {} + 2>/dev/null; echo 'FUSE cleanup: evicted stale snapshots'",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
