@@ -14,6 +14,46 @@ Controlled A/B/C comparison of three approaches to orphaned resource detection:
 
 ---
 
+## Pre-computation: FUSE CLI Snapshot (Sessions B & C)
+
+Before running Sessions B and C, a single FUSE CLI command collects all Azure resource data, computes dependency edges, detects orphans, and projects the results into both a filesystem and a SQLite database.
+
+### Filesystem projection (Session B)
+
+```powershell
+python -m azure_fuse.cli --mcp \
+  --subscription "githubcopilotforazure-testing" \
+  --resource-groups "rg-dev-eastus" \
+  --output ./azure-snapshot \
+  --format filesystem \
+  --clean
+```
+
+### SQLite projection (Session C)
+
+```powershell
+python -m azure_fuse.cli --mcp \
+  --subscription "githubcopilotforazure-testing" \
+  --resource-groups "rg-dev-eastus" \
+  --output ./bench/GithubCopilotForAzure-Testing.db \
+  --format sqlite \
+  --clean
+```
+
+### What the CLI does (one-time cost)
+
+| Step | Description | Time |
+|------|-------------|------|
+| 1. Collect | `az graph query` to list all 35 resources + `az resource show` for each | ~18s |
+| 2. Analyze | Build dependency graph, detect orphans, compute edges | <1s |
+| 3. Enrich | Fetch Azure Retail Prices API for SKU-based cost estimates | ~3s |
+| 4. Project | Write filesystem tree (332 KB) or SQLite DB (548 KB) | <1s |
+| | **Total one-time cost** | **~23s** |
+
+This one-time ~23 second collection replaces the ~64 live API calls that Session A makes on every run.
+
+---
+
 ## Session A: MCP Tools (Azure Live API)
 
 ### Tool Calls
@@ -48,11 +88,17 @@ Controlled A/B/C comparison of three approaches to orphaned resource detection:
 
 | Metric | Value |
 |--------|-------|
+| **Estimated time** | ~4–5 minutes (based on Benchmark 1 measured time of 293s for similar workload) |
 | MCP tool calls | ~22 distinct calls (64 resource fetches) |
 | Azure API calls | ~64 (each MCP call = 1+ ARM API call) |
 | Estimated tokens ingested | ~93,300 |
 | Cross-referencing needed | HIGH — must manually correlate app settings, connection strings, and resource IDs across all 35 resources |
 | Offline capable | NO — requires live Azure connection |
+
+**Time breakdown (estimated):**
+- Resource listing: ~10s (1 API call, large JSON response)
+- Individual resource inspection: ~120–180s (22 sequential MCP calls, each with API latency + LLM reasoning)
+- LLM cross-referencing & reasoning: ~90–120s (correlating resource IDs, app settings, connection strings across 35 resources to determine orphans)
 
 ---
 
@@ -131,6 +177,8 @@ appideveastusgoln5p/rdeps/Failure Anomalies - appideveastusgoln5p.ref      → m
 
 | Metric | Value |
 |--------|-------|
+| **Query time** | <2 seconds (5 filesystem reads from local disk) |
+| **Total time incl. collection** | ~25 seconds (23s one-time collection + <2s query) |
 | Filesystem commands | 5 |
 | Azure API calls | 0 (all pre-computed) |
 | Estimated tokens ingested | ~3,710 |
@@ -226,6 +274,8 @@ SELECT content FROM artifacts WHERE name = 'dependency_graph_mermaid'
 
 | Metric | Value |
 |--------|-------|
+| **Query time** | <1 second (5 SQL queries against local SQLite) |
+| **Total time incl. collection** | ~24 seconds (23s one-time collection + <1s query) |
 | SQL queries | 5 |
 | Azure API calls | 0 (all pre-computed in SQLite) |
 | Database size | 548 KB |
@@ -239,10 +289,13 @@ SELECT content FROM artifacts WHERE name = 'dependency_graph_mermaid'
 
 | Metric | Session A (MCP) | Session B (Filesystem) | Session C (SQLite) |
 |--------|----------------|------------------------|---------------------|
+| **Time (query only)** | ~4–5 min | <2s | <1s |
+| **Time (incl. collection)** | ~4–5 min | ~25s | ~24s |
 | **Tool/command calls** | ~22 | 5 | 5 |
 | **Azure API calls** | ~64 | 0 | 0 |
 | **Estimated tokens ingested** | ~93,300 | ~3,710 | ~2,459 |
 | **Token reduction vs MCP** | baseline | **~96% less** | **~97% less** |
+| **Time reduction vs MCP** | baseline | **~92% less** | **~92% less** |
 | **Cross-referencing reasoning** | HIGH (manual) | NONE (pre-computed) | NONE (SQL JOINs) |
 | **Orphans found** | ~18 (with effort) | 18 | 18 |
 | **Offline capable** | NO | YES | YES |
