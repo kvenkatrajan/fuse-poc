@@ -53,6 +53,7 @@ Controlled A/B comparison of two approaches to Azure resource analysis:
 |--------|-----------|-----------|--------|
 | Time | 293s | 23.4s | **FUSE (12.5× faster)** |
 | Tool calls | 30 | 10 (7 azmcp + 3 SQL) | **FUSE** |
+| Est. tokens | ~24,250 | ~3,050 | **FUSE (8×)** |
 | Pricing accuracy | ✅ Exact retail rates | ✅ Exact retail rates | **Tie** |
 | APIM StandardV2 | $700/mo | $700/mo | Tie |
 | Search Standard | $245/mo | $245/mo | Tie |
@@ -99,6 +100,7 @@ Controlled A/B comparison of two approaches to Azure resource analysis:
 |--------|-----------|-----------|--------|
 | Time | 59s | 0.0s | **FUSE (instant from cache)** |
 | Tool calls | 2 | 1 SQL | **FUSE** |
+| Est. tokens | ~5,600 | ~2,850 | **FUSE (2×)** |
 | Accuracy | ✅ Correct | ✅ Correct (after fix) | **Tie** |
 | Compliance breakdown | ✅ Per-tag | ✅ Per-tag + per-type | **FUSE** |
 
@@ -149,6 +151,7 @@ Controlled A/B comparison of two approaches to Azure resource analysis:
 |--------|-----------|-----------|--------|
 | Time | 187s | 0.01s | **FUSE (18,700× faster)** |
 | Tool calls | 23 | 1 SQL | **FUSE** |
+| Est. tokens | ~17,475 | ~3,250 | **FUSE (5.4×)** |
 | Public access count | 18 | 19 | Tie (different scope) |
 | KV purge protection | ✅ 0/2 disabled | ✅ 0/2 disabled | Tie |
 | Storage blob access | ✅ 0/1 (good) | ✅ 0/1 (good) | Tie |
@@ -168,6 +171,27 @@ Controlled A/B comparison of two approaches to Azure resource analysis:
 | SKU/Pricing | 293s | 23.4s | **12.5×** |
 | Tag Compliance | 59s | 0.0s | **∞ (cached)** |
 | Security Audit | 187s | 0.01s | **18,700×** |
+
+### Token Usage (estimated)
+
+Token counts are estimated from tool response sizes (1 token ≈ 4 chars) plus
+LLM system prompt and reasoning overhead per tool call.
+
+| Scenario | Session A | Session B | Reduction |
+|----------|-----------|-----------|-----------|
+| SKU/Pricing | ~24,250 | ~3,050 | **8.0×** |
+| Tag Compliance | ~5,600 | ~2,850 | **2.0×** |
+| Security Audit | ~17,475 | ~3,250 | **5.4×** |
+| **Total** | **~47,325** | **~9,150** | **5.2×** |
+
+**Why FUSE uses fewer tokens:**
+
+- **Smaller responses:** SQL output is compact tabular data vs large JSON payloads from MCP
+- **Fewer round-trips:** 1 SQL query vs 20+ tool calls, each requiring LLM reasoning
+- **No cross-referencing overhead:** FUSE pre-computes joins; MCP requires the LLM to
+  mentally correlate data across separate API responses
+- **Fixed system prompt cost:** Both sessions pay ~2K tokens for the system prompt, but
+  Session A amortizes it across many more turns
 
 ### Accuracy
 
