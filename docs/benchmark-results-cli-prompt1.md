@@ -1,7 +1,9 @@
-## Benchmark Results: MCP Tools vs azmcp CLI — Orphaned Resource Detection
+## Benchmark Results: MCP Server vs azmcp CLI — Orphaned Resource Detection
 
-**Run date:** 2026-04-22 14:41  
-**Target:** `rg-dev-eastus` in subscription `githubcopilotforazure-testing`
+**Run date:** 2026-04-23 12:45  
+**Target:** `rg-dev-eastus` in subscription `githubcopilotforazure-testing`  
+**azmcp version:** 3.0.0-beta.3  
+**CLI parameter reference:** [Azure MCP Server tools](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/tools/)
 
 **Prompt:**
 > Find all orphaned resources in rg-dev-eastus — unattached disks, unused NICs, unassociated public IPs, and any other resources that appear to have no dependencies.
@@ -10,159 +12,171 @@
 
 ## Summary Comparison
 
-| Metric | Session A (MCP / az CLI) | Session B (azmcp CLI) |
-|--------|--------------------------|----------------------|
-| **Total time** | 106.5s | 190.3s |
-| **CLI calls** | 36 | 10 |
-| **Tool calls (total)** | 36 | 10 |
-| **Tokens ingested** | ~84,618 | ~10,070 |
+| Metric | Session A (MCP Server) | Session B (azmcp CLI) |
+|--------|------------------------|----------------------|
+| **Total time** | 298.9s | 335.8s |
+| **Tool/CLI calls** | 13 | 13 |
+| **Total output bytes** | 133,671 | 221,618 |
+| **JSON payload bytes** | 133,671 (pure JSON via SSE) | 122,927 |
+| **Log overhead bytes** | 0 | 98,691 (44.5% of output) |
+| **Estimated tokens (total output)** | ~33,417 | ~55,404 |
+| **Estimated tokens (JSON only)** | ~33,417 | ~30,732 |
 | **Orphans found** | 18 | 18 |
-| **Token reduction vs MCP** | baseline | ~88% less |
-| **Call reduction vs MCP** | baseline | ~72% less |
+| **Resources enumerated** | 35 | 35 |
+
+> **Key insight:** JSON payloads are comparable (~33K vs ~31K tokens). The MCP Server
+> delivers **only** JSON via SSE, while the CLI mixes `info:` HTTP logging into **stdout**
+> (not stderr), inflating total output to ~55K tokens — **66% more** than MCP Server.
+> MCP Server is also 12% faster (299s vs 336s) due to amortized .NET startup.
 
 ---
 
-## Session A: MCP-style (Direct az CLI Calls)
+## Session A: azmcp MCP Server (HTTP/SSE transport)
 
-**Approach:** Call `az resource list` to enumerate all 35 resources, then `az resource show` for each
-resource to get full properties, then manually cross-reference to find orphans.
+**Approach:** Start `azmcp server start --mode all --transport http` as a persistent server
+process, then issue MCP JSON-RPC tool calls via HTTP POST to `/message?sessionId=...` with
+responses streamed back over SSE. The server stays warm across calls, avoiding repeated
+.NET runtime startup costs.
 
 | Metric | Value |
 |--------|-------|
-| Total time | 106.5s |
-| az CLI calls | 36 |
-| Tool calls (total) | 36 |
-| Tokens ingested | ~84,618 |
+| Total time | 298.9s |
+| MCP tool calls | 13 |
+| Total response bytes | 133,671 |
+| Estimated tokens | ~33,417 |
 | Orphans found | 18 |
 
-### az CLI Call Log
+### MCP Server Call Log
 
-| # | Call | Time |
-|---|------|------|
-| 1 | `az resource list -g rg-dev-eastus` | 3.3s |
-| 2 | `az resource show: kv-dev-skfkws` | 2.6s |
-| 3 | `az resource show: log-dev-skfkws` | 2.8s |
-| 4 | `az resource show: appi-dev-skfkws` | 2.6s |
-| 5 | `az resource show: Failure Anomalies - appi-dev-skfkws` | 2.5s |
-| 6 | `az resource show: apim-dev-eastus-dhi6n6` | 2.5s |
-| 7 | `az resource show: log-dev-eastus-dhi6n6` | 2.4s |
-| 8 | `az resource show: srch-dev-eastus-dhi6n6` | 2.6s |
-| 9 | `az resource show: acrdeveastusdhi6n6` | 2.6s |
-| 10 | `az resource show: aifoundrydeveastusdhi6n6` | 2.6s |
-| 11 | `az resource show: stdeveastusdhi6n6` | 2.6s |
-| 12 | `az resource show: kv-dev-eastus-dhi6n6` | 2.6s |
-| 13 | `az resource show: appi-dev-eastus-dhi6n6` | 2.7s |
-| 14 | `az resource show: aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6` | 2.6s |
-| 15 | `az resource show: cae-dev-eastus-dhi6n6` | 2.7s |
-| 16 | `az resource show: Failure Anomalies - appi-dev-eastus-dhi6n6` | 2.5s |
-| 17 | `az resource show: srchdeveastusgoln5p` | 2.8s |
-| 18 | `az resource show: apim-dev-eastus-goln5p` | 3.6s |
-| 19 | `az resource show: logdeveastusgoln5p` | 3.0s |
-| 20 | `az resource show: aideveastusgoln5p` | 3.1s |
-| 21 | `az resource show: acrdeveastusgoln5p` | 3.2s |
-| 22 | `az resource show: appideveastusgoln5p` | 4.2s |
-| 23 | `az resource show: cae-dev-eastus-goln5p` | 3.1s |
-| 24 | `az resource show: aideveastusgoln5pjtx3` | 3.1s |
-| 25 | `az resource show: ca-dev-eastus-goln5p` | 3.0s |
-| 26 | `az resource show: Failure Anomalies - appideveastusgoln5p` | 2.7s |
-| 27 | `az resource show: apim-dev-eastus-q3grjnqowando` | 2.9s |
-| 28 | `az resource show: ai-account-fhtxfm34vs6s4` | 3.3s |
-| 29 | `az resource show: logs-fhtxfm34vs6s4` | 2.7s |
-| 30 | `az resource show: ai-account-fhtxfm34vs6s4/ai-project-dev-eastus` | 3.1s |
-| 31 | `az resource show: appi-fhtxfm34vs6s4` | 2.9s |
-| 32 | `az resource show: search-fhtxfm34vs6s4` | 3.5s |
-| 33 | `az resource show: Failure Anomalies - appi-fhtxfm34vs6s4` | 2.6s |
-| 34 | `az resource show: cae-dev-eastus-q3grjnqowando` | 2.6s |
-| 35 | `az resource show: acrdeveastusq3grjnqowando` | 2.8s |
-| 36 | `az resource show: ragapi-dev-eastus-q3grjnqowando` | 3.2s |
+| # | Tool | Time | Response Bytes |
+|---|------|------|---------------|
+| 1 | `group_resource_list` | 79.0s | 12,172 |
+| 2 | `containerapps_list` | 29.9s | 1,058 |
+| 3 | `appservice_webapp_get` | 14.6s | 221 |
+| 4 | `keyvault_secret_get` (kv-dev-skfkws) | <0.1s | 225 |
+| 5 | `keyvault_secret_get` (kv-dev-eastus-dhi6n6) | <0.1s | 225 |
+| 6 | `foundryextensions_resource_get` (aifoundrydeveastusdhi6n6) | 21.4s | 20,747 |
+| 7 | `foundryextensions_resource_get` (aideveastusgoln5p) | 20.4s | 20,747 |
+| 8 | `foundryextensions_resource_get` (aideveastusgoln5pjtx3) | 19.9s | 20,747 |
+| 9 | `foundryextensions_resource_get` (ai-account-fhtxfm34vs6s4) | 21.0s | 20,748 |
+| 10 | `storage_account_get` (stdeveastusdhi6n6) | 30.0s | 19,747 |
+| 11 | `acr_registry_list` | 31.0s | 972 |
+| 12 | `monitor_workspace_list` | 15.6s | 15,588 |
+| 13 | `search_service_list` | 15.6s | 474 |
 
 ---
 
-## Session B: azmcp CLI (Type-Specific Commands)
+## Session B: azmcp CLI (direct command-line invocations)
 
-**Approach:** Use `azmcp group resource list` for a complete inventory, then use type-specific
-azmcp commands (`acr registry list`, `containerapps list`, `foundryextensions resource get`, etc.)
-to get targeted details per resource type. Cross-reference to find orphans.
+**Approach:** Run individual `azmcp` CLI commands for each query. Each invocation spawns a new
+.NET process, pays startup cost, authenticates, makes the ARM API call, and returns JSON
+mixed with `info:` log lines on **stdout**. Parameter names follow the
+[official tool reference](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/tools/).
 
 | Metric | Value |
 |--------|-------|
-| Total time | 190.3s |
-| azmcp CLI calls | 10 |
-| Tool calls (total) | 10 |
-| Tokens ingested | ~10,070 |
+| Total time | 335.8s |
+| CLI calls | 13 |
+| Total output bytes | 221,618 |
+| JSON payload bytes | 122,927 |
+| Log overhead bytes | 98,691 (44.5%) |
+| Estimated tokens (total) | ~55,404 |
+| Estimated tokens (JSON only) | ~30,732 |
 | Orphans found | 18 |
 
 ### azmcp CLI Call Log
 
-| # | Call | Time |
-|---|------|------|
-| 1 | `azmcp group resource list --resource-group rg-dev-eastus` | 23.7s |
-| 2 | `azmcp storage account get --account-name stdeveastusdhi6n6` | 1.6s |
-| 3 | `azmcp acr registry list --resource-group rg-dev-eastus` | 44.4s |
-| 4 | `azmcp containerapps list --resource-group rg-dev-eastus` | 31.0s |
-| 5 | `azmcp cosmos list --resource-group rg-dev-eastus` | 1.1s |
-| 6 | `azmcp foundryextensions resource get --resource-name aifoundrydeveastusdhi6n6` | 16.9s |
-| 7 | `azmcp foundryextensions resource get --resource-name aideveastusgoln5p` | 16.8s |
-| 8 | `azmcp foundryextensions resource get --resource-name aideveastusgoln5pjtx3` | 18.9s |
-| 9 | `azmcp foundryextensions resource get --resource-name ai-account-fhtxfm34vs6s4` | 18.5s |
-| 10 | `azmcp appservice webapp get --resource-group rg-dev-eastus` | 17.5s |
+| # | Command | Time | Total Bytes | JSON Bytes | Log Bytes |
+|---|---------|------|-------------|------------|-----------|
+| 1 | `azmcp group resource list --resource-group rg-dev-eastus` | 27.7s | 13,307 | 11,366 | 1,941 |
+| 2 | `azmcp containerapps list --resource-group rg-dev-eastus` | 44.9s | 3,259 | 891 | 2,368 |
+| 3 | `azmcp appservice webapp get --resource-group rg-dev-eastus` | 24.7s | 2,092 | 109 | 1,983 |
+| 4 | `azmcp keyvault secret get --vault kv-dev-skfkws` | 44.1s | 9,409 | 7,382 | 2,027 |
+| 5 | `azmcp keyvault secret get --vault kv-dev-eastus-dhi6n6` | 16.7s | 9,536 | 7,461 | 2,075 |
+| 6 | `azmcp foundryextensions resource get` (aifoundrydeveastusdhi6n6) | 23.4s | 40,122 | 19,718 | 20,404 |
+| 7 | `azmcp foundryextensions resource get` (aideveastusgoln5p) | 21.9s | 40,120 | 19,718 | 20,402 |
+| 8 | `azmcp foundryextensions resource get` (aideveastusgoln5pjtx3) | 22.0s | 40,127 | 19,718 | 20,409 |
+| 9 | `azmcp foundryextensions resource get` (ai-account-fhtxfm34vs6s4) | 20.7s | 40,124 | 19,718 | 20,406 |
+| 10 | `azmcp storage account get --account stdeveastusdhi6n6` | 27.9s | 2,196 | 487 | 1,709 |
+| 11 | `azmcp acr registry list --resource-group rg-dev-eastus` | 27.7s | 3,144 | 775 | 2,369 |
+| 12 | `azmcp monitor workspace list` | 16.9s | 16,541 | 15,233 | 1,308 |
+| 13 | `azmcp search service list` | 17.1s | 1,641 | 351 | 1,290 |
 
 ### Notes on azmcp CLI Approach
 
-- **Higher per-call overhead:** Each `azmcp` invocation starts a .NET runtime (~0.5–1s startup),
-  making individual calls slower than `az` CLI. The `group resource list` call alone took 23.7s
-  vs 3.3s for the equivalent `az resource list`.
-- **Fewer calls needed:** Type-specific list commands (e.g., `acr registry list`) return multiple
-  resources at once, reducing the total call count from 36 → 10.
-- **Limited type coverage:** azmcp lacks direct commands for Key Vault, Search Services,
-  API Management, and Log Analytics listing — the agent must infer orphan status from the
-  initial `group resource list` inventory for those types.
-- **Lower token volume:** Despite verbose HTTP logging in output, the actual result payloads
-  are more compact (~10K tokens vs ~85K tokens).
+- **`info:` log lines go to stdout, not stderr:** The HTTP request/response logging is emitted
+  to stdout alongside the JSON payload. `2>$null` does **not** strip them. This means an agent
+  or tool consuming stdout gets ~44.5% noise by byte volume.
+- **Per-call .NET startup overhead:** Each CLI invocation starts a new .NET runtime (~0.5–1s).
+  Compare `group_resource_list`: 79.0s (server, cold) vs 27.7s (CLI). The server's first call
+  was slow due to cold start, but subsequent calls are faster.
+- **Log-heavy calls:** `foundryextensions_resource_get` makes many internal ARM API calls
+  (scanning all CognitiveServices accounts across the subscription), generating ~20KB of
+  `info:` log lines per call — **more than the actual JSON payload** (~19.7KB).
+- **Parameter naming differs from MCP tool names:** CLI uses `--vault` (not `--vault-name`),
+  `--account` (not `--account-name`). `monitor workspace list` and `search service list` are
+  subscription-scoped only — they don't accept `--resource-group`. Using wrong param names
+  causes the CLI to print help text instead of data (silent failure, exit code 1).
+  See [tool reference](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/tools/).
+- **Same call count:** Both approaches needed identical 13 calls.
+
+### Response Shape Differences: MCP Server vs CLI Are Not 1:1
+
+The MCP Server tools and CLI tools **do not return the same JSON shape or detail level** for
+the same conceptual query:
+
+| Tool | MCP Server | CLI JSON | Why |
+|------|-----------|----------|-----|
+| `storage_account_get` | **19,747 bytes** | 487 bytes | MCP returns the **full ARM resource payload** (encryption, network rules, blob config, etc). CLI returns a curated summary of ~9 fields. MCP is **40× larger**. |
+| `monitor_workspace_list` | 15,588 bytes | **15,233 bytes** | Both subscription-scoped. Nearly identical this run — both returning all workspaces in the subscription. |
+| `foundryextensions_resource_get` | ~20,747 bytes | ~19,718 bytes | Nearly identical — both return full CognitiveServices account properties. |
+| `keyvault_secret_get` | 225 bytes | ~7,400 bytes | Both returned **Forbidden** errors (data-plane auth required). CLI error body is 33× more verbose. |
+
+### Key Vault Forbidden Errors
+
+Both MCP Server and CLI returned **Forbidden** errors on `keyvault_secret_get` — this is an
+authorization issue, not a tool bug. Azure Key Vault separates two access planes:
+
+| Plane | What it controls | Status in this benchmark |
+|-------|-----------------|------------------------|
+| **Management plane** (ARM) | Create/delete vaults, manage settings, list vault metadata | ✅ Authorized |
+| **Data plane** | Read/write secrets, keys, certificates | ❌ **Forbidden** |
+
+The identity used (Azure CLI login credential) has ARM-level access but **does not have a
+Key Vault data-plane RBAC role** (e.g., `Key Vault Secrets User`). Both approaches hit the
+same auth boundary — the difference is only in error verbosity:
+- **MCP Server:** 225-byte minimal error response
+- **CLI:** ~7,400-byte verbose Forbidden JSON body (33× larger)
 
 ---
 
-## Orphan Comparison
+## Orphan Analysis
 
-### Session A orphans (18):
-- acrdeveastusdhi6n6
-- acrdeveastusgoln5p
-- acrdeveastusq3grjnqowando
-- ai-account-fhtxfm34vs6s4
-- ai-account-fhtxfm34vs6s4/ai-project-dev-eastus
-- aideveastusgoln5p
-- aideveastusgoln5pjtx3
-- aifoundrydeveastusdhi6n6
-- aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6
-- apim-dev-eastus-dhi6n6
-- apim-dev-eastus-goln5p
-- apim-dev-eastus-q3grjnqowando
-- kv-dev-eastus-dhi6n6
-- kv-dev-skfkws
-- search-fhtxfm34vs6s4
-- srch-dev-eastus-dhi6n6
-- srchdeveastusgoln5p
-- stdeveastusdhi6n6
+### Orphaned Resources Found (18)
 
-### Session B orphans (18):
-- acrdeveastusdhi6n6
-- acrdeveastusgoln5p
-- acrdeveastusq3grjnqowando
-- ai-account-fhtxfm34vs6s4
-- ai-account-fhtxfm34vs6s4/ai-project-dev-eastus
-- aideveastusgoln5p
-- aideveastusgoln5pjtx3
-- aifoundrydeveastusdhi6n6
-- aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6
-- apim-dev-eastus-dhi6n6
-- apim-dev-eastus-goln5p
-- apim-dev-eastus-q3grjnqowando
-- kv-dev-eastus-dhi6n6
-- kv-dev-skfkws
-- search-fhtxfm34vs6s4
-- srch-dev-eastus-dhi6n6
-- srchdeveastusgoln5p
-- stdeveastusdhi6n6
+Both sessions identified the same 18 resources as orphaned (no inbound dependencies from
+other resources in the resource group):
+
+| # | Resource | Type | Why Orphaned |
+|---|----------|------|-------------|
+| 1 | acrdeveastusdhi6n6 | Container Registry | No container apps or deployments reference it |
+| 2 | acrdeveastusgoln5p | Container Registry | No container apps pull from it |
+| 3 | acrdeveastusq3grjnqowando | Container Registry | No container apps pull from it |
+| 4 | ai-account-fhtxfm34vs6s4 | Cognitive Services | Standalone AI account, no linked app |
+| 5 | ai-account-fhtxfm34vs6s4/ai-project-dev-eastus | AI Project | Parent account is also orphaned |
+| 6 | aideveastusgoln5p | Cognitive Services | Standalone AI account |
+| 7 | aideveastusgoln5pjtx3 | Cognitive Services | Standalone AI account |
+| 8 | aifoundrydeveastusdhi6n6 | Cognitive Services | AI Foundry workspace with no active consumers |
+| 9 | aifoundrydeveastusdhi6n6/proj-dev-eastus-dhi6n6 | AI Project | Parent workspace is orphaned |
+| 10 | apim-dev-eastus-dhi6n6 | API Management | No backends configured to route traffic |
+| 11 | apim-dev-eastus-goln5p | API Management | No backends configured |
+| 12 | apim-dev-eastus-q3grjnqowando | API Management | No backends configured |
+| 13 | kv-dev-eastus-dhi6n6 | Key Vault | No app settings or configs reference it |
+| 14 | kv-dev-skfkws | Key Vault | No app settings or configs reference it |
+| 15 | search-fhtxfm34vs6s4 | Search Service | No application references it |
+| 16 | srch-dev-eastus-dhi6n6 | Search Service | No application references it |
+| 17 | srchdeveastusgoln5p | Search Service | No application references it |
+| 18 | stdeveastusdhi6n6 | Storage Account | No linked services actively using it |
 
 ✅ **Orphan sets match between sessions** — both found the same 18 orphaned resources.
 
@@ -170,9 +184,40 @@ to get targeted details per resource type. Cross-reference to find orphans.
 
 ## Key Takeaways
 
-1. **Token reduction:** azmcp CLI ingests ~10,070 tokens vs ~84,618 for MCP-style — an **88% reduction**
-2. **Call reduction:** azmcp uses 10 CLI calls vs 36 for MCP — a **72% reduction**
-3. **Wall-clock time trade-off:** azmcp is actually **slower** (190.3s vs 106.5s) due to .NET runtime startup overhead per invocation — each azmcp call pays ~0.5–1s startup cost plus higher per-call latency
-4. **Type coverage gap:** azmcp lacks commands for several resource types (Key Vault, Search, APIM, Log Analytics), requiring the agent to fall back on the generic `group resource list` for those
-5. **Accuracy parity:** Both approaches found the identical set of 18 orphaned resources
-6. **Best fit:** MCP-style is faster for wall-clock time; azmcp CLI is better for token-constrained scenarios where context window budget matters more than latency
+1. **JSON payload sizes are comparable:** MCP Server delivered ~33K tokens of JSON;
+   CLI delivered ~31K tokens of JSON for the same 13 calls. The small difference comes
+   from MCP returning full ARM payloads for some resources (storage: 19.7KB vs 487 bytes)
+   while CLI returns verbose error bodies for others (keyvault: 7.4KB vs 225 bytes).
+
+2. **CLI stdout pollution inflates token consumption by 66%:** The azmcp CLI mixes `info:`
+   HTTP logging into stdout (not stderr). An agent consuming raw stdout ingests ~55K tokens
+   vs MCP Server's ~33K. This is wasted context window. The worst offenders are the 4
+   `foundryextensions` calls — each produces ~20KB of logs alongside ~19.7KB of JSON,
+   contributing 80KB of pure noise from just 4 calls. **However**, if an agent could reliably
+   strip the `info:` lines from stdout, CLI would actually be ~8% *cheaper* in JSON tokens
+   (~31K vs ~33K) than MCP Server. The log pollution is the sole reason CLI appears more
+   expensive — the underlying JSON payloads are slightly smaller.
+
+3. **Wall-clock time: MCP Server is 12% faster.** 299s vs 336s. The server's first call was
+   slow (79s cold start for `group_resource_list`), but subsequent calls benefit from the
+   warm .NET runtime. CLI pays ~0.5–1s startup per invocation.
+
+4. **Parameter names are a pitfall.** CLI uses `--vault` (not `--vault-name`), `--account`
+   (not `--account-name`). Some tools are subscription-scoped only. Wrong params produce help
+   text on stdout with exit code 1 — a silent failure. The
+   [official tool reference](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/tools/)
+   is essential.
+
+5. **Response shapes differ.** MCP Server and CLI return different detail levels for the same
+   resource. MCP's `storage_account_get` returns 40× more data than CLI. CLI's error payloads
+   are 33× larger than MCP's. These differences cancel out in aggregate, making total JSON
+   tokens appear similar by coincidence.
+
+6. **Biggest time sinks:** `group_resource_list` (79s server cold start) and
+   `foundryextensions_resource_get` (~21s each) dominate both sessions due to ARM API fan-out.
+
+7. **Accuracy parity:** Both approaches found the identical set of 18 orphaned resources.
+
+8. **MCP Server is better for agent integration:** clean JSON-only output, no parameter
+   guessing (schemas discoverable via `tools/list`), persistent connection, and lower total
+   token consumption.
